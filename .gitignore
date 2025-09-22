@@ -1,3 +1,4 @@
 ip.xlsx
 output/
 __pycache__/
+*_results.xlsx

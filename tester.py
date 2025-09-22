@@ -4,6 +4,7 @@ import os
 import sys
 import subprocess
 import platform
+import re
 from typing import List, Tuple, Optional, Dict
 
 
@@ -26,6 +27,14 @@ def _choose_column(headers: Dict[int, str], candidates: List[str]) -> Optional[i
             return idx
     return None
 
+
+
+def _split_ip_tokens(raw_ip: str) -> List[str]:
+    if not raw_ip:
+        return []
+    # Support comma, semicolon, slash, and whitespace separated IP lists
+    parts = [part.strip() for part in re.split(r'[\s,;\/]+', raw_ip) if part.strip()]
+    return parts
 
 def load_entries_from_xlsx(path: str,
                            sheet: Optional[str] = None,
@@ -108,15 +117,19 @@ def load_entries_from_xlsx(path: str,
         ip_val = row[ip_idx] if ip_idx < len(row) else None
         if not ip_val:
             continue
-        ip = str(ip_val).strip()
-        if not ip:
+        raw_ip = str(ip_val).strip()
+        if not raw_ip:
+            continue
+        ips = _split_ip_tokens(raw_ip)
+        if not ips:
             continue
         name = ""
         if name_idx is not None and name_idx < len(row):
             name_val = row[name_idx]
             if name_val:
                 name = str(name_val).strip()
-        entries.append((name, ip))
+        for ip in ips:
+            entries.append((name, ip))
 
     return entries
 
@@ -191,6 +204,62 @@ def print_summary(results: List[Tuple[str, str, bool]]):
         print(line([(name, name_w), (ip, ip_w), (status, len(status_header))]))
 
 
+
+
+def save_results_to_xlsx(results: List[Tuple[str, str, bool]], output_path: str) -> None:
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+    except Exception:
+        print("Warning: skipping Excel export because openpyxl is unavailable.")
+        return
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Ping Results"
+    headers = ["VM Name", "IP Address", "Status"]
+    ws.append(headers)
+
+    for name, ip, ok in results:
+        ws.append([name, ip, "UP" if ok else "DOWN"])
+
+    header_font = Font(color="FFFFFFFF", bold=True)
+    header_fill = PatternFill(fill_type="solid", fgColor="FF305496")
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    ws.freeze_panes = "A2"
+    status_up_fill = PatternFill(fill_type="solid", fgColor="FF92D050")
+    status_down_fill = PatternFill(fill_type="solid", fgColor="FFFF5B5B")
+
+    for row in ws.iter_rows(min_row=2, min_col=1, max_col=3):
+        name_cell, ip_cell, status_cell = row
+        name_cell.alignment = Alignment(horizontal="left")
+        ip_cell.alignment = Alignment(horizontal="left")
+        status_text = str(status_cell.value or "").upper()
+        status_cell.value = status_text
+        status_cell.alignment = Alignment(horizontal="center", vertical="center")
+        status_cell.font = Font(bold=True)
+        status_cell.fill = status_up_fill if status_text == "UP" else status_down_fill
+
+    for col_idx in range(1, ws.max_column + 1):
+        column_letter = get_column_letter(col_idx)
+        max_len = 0
+        for row_idx in range(1, ws.max_row + 1):
+            value = ws.cell(row=row_idx, column=col_idx).value
+            max_len = max(max_len, len(str(value)) if value is not None else 0)
+        ws.column_dimensions[column_letter].width = max(12, max_len + 2)
+
+    ws.auto_filter.ref = f"A1:C{ws.max_row}"
+
+    try:
+        wb.save(output_path)
+        print(f"Saved results to '{output_path}'.")
+    except Exception as exc:
+        print(f"Warning: failed to save results to '{output_path}': {exc}")
 def parse_args(argv: List[str]):
     p = argparse.ArgumentParser(description="Ping VMs listed in an Excel sheet (.xlsx)")
     p.add_argument("excel", nargs="?", default="ip.xlsx", help="Path to the Excel file (default: ip.xlsx)")
@@ -199,6 +268,7 @@ def parse_args(argv: List[str]):
     p.add_argument("--ip-column", dest="ip_col", help="Header name for IP address column (auto-detect if omitted)")
     p.add_argument("--timeout", type=int, default=1000, help="Ping timeout per host in ms (default: 1000)")
     p.add_argument("--workers", type=int, default=16, help="Concurrent workers (default: 16; set 1 for sequential)")
+    p.add_argument("--output", dest="output_excel", help="Path to write the results workbook (default: <input>_results.xlsx)")
     return p.parse_args(argv)
 
 
@@ -212,6 +282,14 @@ def main(argv: List[str]) -> int:
     print(f"Loaded {len(entries)} entries from '{args.excel}'. Pinging...")
     results = check_all(entries, workers=max(1, args.workers), timeout_ms=max(1, args.timeout))
     print_summary(results)
+    output_path = args.output_excel
+    if not output_path:
+        excel_abspath = os.path.abspath(args.excel)
+        excel_dir = os.path.dirname(excel_abspath) or os.getcwd()
+        base_name = os.path.splitext(os.path.basename(excel_abspath))[0] or "ping_results"
+        output_path = os.path.join(excel_dir, f"{base_name}_results.xlsx")
+    save_results_to_xlsx(results, output_path)
+
 
     # Exit code 0 if all up; 1 otherwise
     return 0 if all(ok for _, _, ok in results) else 1

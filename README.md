@@ -1,111 +1,71 @@
 # Ping Tester
 
-A simple cross-platform CLI tool to ping many hosts listed in an Excel (.xlsx) file. It auto-detects common column headers, runs pings concurrently, and prints a compact summary table of results.
+Keep tabs on any fleet of machines straight from Excel. Feed the tool an `.xlsx` inventory and it will fan out pings in parallel, split multi-interface cells automatically, and hand back both a clear console summary and a polished workbook you can share.
 
-## Features
-- Auto-detects header columns for IP and name (with overrides)
-- Concurrent pinging for speed on large lists
-- Works on Windows, macOS, and Linux (uses the system `ping`)
-- Clear summary with per-host UP/DOWN status
+## Highlights
+- Multi-IP aware: a single cell like `172.25.22.5, 172.25.22.6` is expanded and checked host-by-host.
+- Styled Excel report: results land in `{input}_results.xlsx` with color-coded status, frozen header row, filters, and auto-fit columns.
+- Smart header detection for common name/IP labels, with explicit overrides when needed.
+- Cross-platform: uses the system `ping` command on Windows, macOS, and Linux.
+- Fast by default thanks to configurable worker pools and timeouts.
 
-## Requirements
-- Python 3.8+
-- Python package: `openpyxl`
-- System `ping` command available on PATH
+## Quick Start
+```powershell
+# Optional: create a virtual environment
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install --upgrade pip openpyxl
 
-## Installation
-- Optional virtualenv (recommended)
-  - Windows PowerShell:
-    ```powershell
-    py -m venv .venv
-    .\.venv\Scripts\Activate.ps1
-    pip install --upgrade pip
-    pip install openpyxl
-    ```
-  - macOS/Linux:
-    ```bash
-    python3 -m venv .venv
-    source .venv/bin/activate
-    pip install --upgrade pip
-    pip install openpyxl
-    ```
+# Run against the default ip.xlsx
+py tester.py
 
-## Excel Input
-- Default file name: `ip.xlsx` in the project root.
-- Sheet: active sheet by default; override with `--sheet`.
-- Header auto-detection:
-  - IP column candidates: `ip`, `ipaddress`, `ipv4`, `address`
-  - Name column candidates: `vm`, `vmname`, `name`, `hostname`, `host`, `machine`, `computer`, `server`
-- You can force specific headers with `--ip-column` and `--name-column`.
+# Or point to a different workbook and change settings
+py tester.py inventory.xlsx --sheet "Prod" --timeout 1500 --workers 32
+```
 
-Example layout (first row is headers):
+macOS/Linux users can swap `py` for `python3` and source the virtual environment with `source .venv/bin/activate`.
 
-| VM | IP |
+## Excel Expectations
+- Default input file is `ip.xlsx` (override by passing a path or using `--sheet`).
+- The first row should contain headers; auto-detection looks for typical name/IP keywords.
+- Use `--name-column` / `--ip-column` if the tool cannot guess correctly.
+
+Example rows:
+
+| VM Name | IP Addresses |
 | --- | --- |
 | web-01 | 192.168.1.10 |
-| db-01 | 192.168.1.11 |
+| firewall | 172.25.22.5, 172.25.22.6 |
 
-## Usage
-Run the script directly with Python. The default input file is `ip.xlsx`.
+## Command Reference
+Flag | Description
+---- | -----------
+`excel` | Workbook to inspect (defaults to `ip.xlsx`).
+`--sheet` | Worksheet name; uses the active sheet when omitted.
+`--name-column` | Header text to treat as the machine name column.
+`--ip-column` | Header text to treat as the IP column.
+`--timeout` | Ping timeout per host in milliseconds (default: `1000`).
+`--workers` | Number of concurrent ping workers (default: `16`).
+`--output` | Destination for the generated report (defaults to `{input_file}_results.xlsx`).
 
-- Basic (uses `ip.xlsx` active sheet):
-  - Windows PowerShell:
-    ```powershell
-    py tester.py
-    ```
-  - macOS/Linux:
-    ```bash
-    python3 tester.py
-    ```
+## What You Get
+- Console table summarising each interface and its `UP`/`DOWN` status.
+- Excel report with:
+  - A bold navy header row frozen in place.
+  - Auto-filter enabled, so you can instantly slice by up/down.
+  - Auto-sized columns for clean readability.
+  - Green fill for `UP`, red for `DOWN`.
 
-- Specify a different file and sheet, and force headers:
-  ```bash
-  python3 tester.py my-hosts.xlsx --sheet "Inventory" --name-column "Hostname" --ip-column "IP Address"
-  ```
-
-- Tune concurrency and timeouts:
-  ```bash
-  python3 tester.py ip.xlsx --workers 32 --timeout 1500
-  ```
-
-Arguments:
-- `excel`: Path to the Excel file (default: `ip.xlsx`)
-- `--sheet`: Worksheet name (default: workbook active sheet)
-- `--name-column`: Header text for the name column (override auto-detection)
-- `--ip-column`: Header text for the IP column (override auto-detection)
-- `--timeout`: Ping timeout per host in milliseconds (default: 1000)
-- `--workers`: Number of concurrent workers (default: 16; set `1` for sequential)
-
-## Output
-The tool prints a simple summary table, for example:
-
-```
-VM Name   IP Address     Status
--------   ----------     ------
-web-01    192.168.1.10   UP
-db-01     192.168.1.11   DOWN
-```
-
-Exit code is `0` if all hosts are UP, otherwise `1`.
-
-## Notes and Tips
-- Windows vs Unix ping:
-  - Windows: `ping -n 1 -w <ms>`
-  - Unix: `ping -c 1 -W <s>` (timeout in whole seconds)
-- If you see many DOWN results, ensure targets allow ICMP Echo (firewall/router may block).
-- For large lists, increase `--workers` to improve throughput. Be mindful of network and host rate limits.
-- If auto-detection fails, pass `--ip-column` and `--name-column` explicitly and ensure headers are on the first row.
+Exit status is `0` only when every interface responds. Any unreachable host returns `1` so you can plug the command straight into automation.
 
 ## Troubleshooting
-- `Error: openpyxl is required ...`: Install with `pip install openpyxl`.
-- `Error: 'ping' command not found ...`: Ensure `ping` exists in your system PATH. On minimal containers, install the OSâ€™s `iputils`/`inetutils`.
-- File not found: Verify the Excel file path, or pass the correct filename.
-- Wrong sheet: Use `--sheet` with the exact worksheet name.
+- "openpyxl is required": install it (`pip install openpyxl`).
+- "'ping' command not found": ensure your OS packages supply a `ping` binary.
+- Firewalls can block ICMP; double-check policy if you receive unexpected `DOWN` results.
 
 ## Project Files
-- `tester.py`: Main CLI script.
-- `.gitignore`: Ignores `output/` and `__pycache__/` (feel free to adjust).
+- `tester.py` – command-line entrypoint.
+- `ip.xlsx` – sample/working inventory (you can replace it).
+- `.gitignore` – ignores virtual env artefacts and generated Excel outputs.
 
-## License
-Specify a license for your project if you plan to share it publicly.
-
+You are encouraged to add a project license if you plan to publish the repository.
